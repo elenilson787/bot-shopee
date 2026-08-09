@@ -23,39 +23,49 @@ class ShopeeAffiliateHub:
             "Authorization": f"SHA256 Credential={self.app_id}, Timestamp={timestamp}, Signature={signature}"
         }
 
-        response = requests.post(self.endpoint, data=payload, headers=headers)
-        return response.json()
+        try:
+            response = requests.post(self.endpoint, data=payload, headers=headers, timeout=10)
+            return response.json()
+        except Exception as e:
+            print(f"❌ Erro de conexão com Shopee: {e}")
+            return {}
 
-    def get_offers(self, limit: int = 20, min_discount: int = 0, sort_by_commission: bool = False):
-        """Busca ofertas na Shopee com filtros flexíveis de desconto e ordenação por comissão."""
+    def get_offers(self, limit: int = 20, sort_by_commission: bool = False):
+        """Busca ofertas na Shopee usando schema GraphQL padronizado."""
         graphql_query = """
         query GetHotOffers($limit: Int) {
-            productOfferV2(page: 1, limit: $limit, sortType: 2) {
+            productOfferV2(page: 1, limit: $limit) {
                 nodes {
                     itemId
                     productName
                     price
-                    discount
                     imageUrl
                     offerLink
                     commissionRate
+                    commission
                 }
             }
         }
         """
         result = self._execute_query(graphql_query, {"limit": limit})
-        offers = result.get("data", {}).get("productOfferV2", {}).get("nodes", [])
         
-        # 1. Filtra pelo desconto mínimo escolhido
-        filtered_offers = [item for item in offers if float(item.get("discount", 0)) >= min_discount]
-        
-        # 2. Se for solicitado, ordena da MAIOR comissão para a menor
-        if sort_by_commission:
-            filtered_offers.sort(key=lambda x: float(x.get("commissionRate", 0)), reverse=True)
-            
-        return filtered_offers
+        # Exibe a resposta real nos logs do Render para acompanhamento
+        print(f"🔍 Resposta da API Shopee: {json.dumps(result)}")
 
-    def convert_to_affiliate_link(self, original_url: str, sub_id: str = "github_bot") -> str:
+        if "errors" in result:
+            print(f"⚠️ GraphQL retornou erro: {result.get('errors')}")
+
+        data = result.get("data") or {}
+        product_offer = data.get("productOfferV2") or {}
+        offers = product_offer.get("nodes") or []
+        
+        # Ordena da maior comissão para a menor quando solicitado
+        if sort_by_commission and offers:
+            offers.sort(key=lambda x: float(x.get("commissionRate", 0) or 0), reverse=True)
+            
+        return offers
+
+    def convert_to_affiliate_link(self, original_url: str, sub_id: str = "bot_private") -> str:
         graphql_query = """
         query ConvertLink($originUrl: String!, $subId: String) {
             generateUrl(originUrl: $originUrl, subId1: $subId) {
@@ -64,4 +74,6 @@ class ShopeeAffiliateHub:
         }
         """
         result = self._execute_query(graphql_query, {"originUrl": original_url, "subId": sub_id})
-        return result.get("data", {}).get("generateUrl", {}).get("shortLink", original_url)
+        data = result.get("data") or {}
+        gen_url = data.get("generateUrl") or {}
+        return gen_url.get("shortLink", original_url)
