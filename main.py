@@ -65,7 +65,7 @@ def callback_listener(call):
         sort_comm = (call.data == "fetch_top_commission")
         msg_header = "💰 <b>PRODUTO COM ALTA COMISSÃO!</b> 💰" if sort_comm else "📦 <b>OFERTA ENCONTRADA NA SHOPEE!</b> 📦"
 
-        deals = shopee.get_offers(limit=20, sort_by_commission=sort_comm)
+        deals, error_msg = shopee.get_offers(limit=15, sort_by_commission=sort_comm)
         
         if deals:
             item = deals[0]
@@ -73,7 +73,6 @@ def callback_listener(call):
             price = float(item.get("price", 0) or 0)
             commission_rate = float(item.get("commissionRate", 0) or 0)
             
-            # Ajusta exibição caso a comissão venha em formato decimal (ex: 0.08 -> 8.0%)
             if commission_rate < 1.0 and commission_rate > 0:
                 commission_rate *= 100
             
@@ -89,10 +88,11 @@ def callback_listener(call):
             
             bot.send_photo(chat_id, photo=item.get("imageUrl"), caption=caption, parse_mode="HTML")
         else:
-            bot.send_message(chat_id, "⚠️ Nenhuma oferta retornada. Verifique os logs no painel do Render.")
+            # Mostra o motivo real do erro no próprio chat
+            bot.send_message(chat_id, f"⚠️ <b>Erro ao buscar oferta:</b>\n<code>{error_msg}</code>", parse_mode="HTML")
 
     elif call.data == "config_interval":
-        bot.send_message(chat_id, "⚙️ <b>Configuração de Intervalo:</b>\nVocê pode alterar os horários e o tempo entre disparos no painel principal.", parse_mode="HTML")
+        bot.send_message(chat_id, "⚙️ <b>Configuração de Intervalo:</b>\nEm breve você poderá alterar os horários por aqui!", parse_mode="HTML")
 
     elif call.data == "status_info":
         bot.send_message(chat_id, f"ℹ️ <b>Seu Chat ID:</b> <code>{chat_id}</code>\nRobô ativo e conectado!", parse_mode="HTML")
