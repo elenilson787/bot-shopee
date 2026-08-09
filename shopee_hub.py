@@ -7,7 +7,8 @@ class ShopeeAffiliateHub:
     def __init__(self, app_id: str, app_secret: str):
         self.app_id = app_id or ""
         self.app_secret = app_secret or ""
-        self.endpoint = "https://open-api.affiliate.shopee.com/graphql"
+        # Endpoint oficial da Shopee Brasil
+        self.endpoint = "https://open-api.affiliate.shopee.com.br/graphql"
 
     def _generate_signature(self, timestamp: int, payload: str) -> str:
         factor = f"{self.app_id}{timestamp}{payload}{self.app_secret}"
@@ -15,10 +16,9 @@ class ShopeeAffiliateHub:
 
     def _execute_query(self, query_str: str, variables: dict = None) -> dict:
         if not self.app_id or not self.app_secret:
-            return {"error": "Credenciais da Shopee (SHOPEE_APP_ID / SHOPEE_APP_SECRET) não configuradas no Render!"}
+            return {"error": "Credenciais da Shopee não configuradas no Render!"}
 
         timestamp = int(time.time())
-        # Formata o JSON compacto sem espaços extras para bater com a assinatura SHA256
         payload = json.dumps({"query": query_str, "variables": variables or {}}, separators=(',', ':'))
         signature = self._generate_signature(timestamp, payload)
 
@@ -50,11 +50,9 @@ class ShopeeAffiliateHub:
         """
         result = self._execute_query(graphql_query, {"limit": limit})
         
-        # 1. Checa se o método interno retornou um erro estruturado
         if "error" in result:
             return None, result["error"]
 
-        # 2. Checa se a Shopee retornou erro de credenciais ou permissão GraphQL
         if "errors" in result and result["errors"]:
             err_msg = result["errors"][0].get("message", "Erro GraphQL desconhecido")
             return None, f"Shopee Recusou: {err_msg}"
