@@ -36,10 +36,8 @@ def show_filter_menu(chat_id, message_id=None):
     markup = InlineKeyboardMarkup()
     markup.row_width = 1
     markup.add(
-        InlineKeyboardButton("💰 Maiores Comissões (Qualquer Desconto)", callback_data="fetch_top_commission"),
-        InlineKeyboardButton("💥 Descontos Maiores de 10%", callback_data="fetch_disc_10"),
-        InlineKeyboardButton("🔥 Descontos Maiores de 30%", callback_data="fetch_disc_30"),
-        InlineKeyboardButton("🎁 Qualquer Desconto / Oferta Ativa", callback_data="fetch_disc_0"),
+        InlineKeyboardButton("💰 Maiores Comissões", callback_data="fetch_top_commission"),
+        InlineKeyboardButton("🎁 Qualquer Oferta Ativa na Shopee", callback_data="fetch_disc_0"),
         InlineKeyboardButton("⬅️ Voltar ao Menu Principal", callback_data="menu_main")
     )
     
@@ -61,52 +59,37 @@ def callback_listener(call):
     elif call.data == "menu_main":
         send_welcome(call.message)
 
-    elif call.data in ["fetch_top_commission", "fetch_disc_10", "fetch_disc_30", "fetch_disc_0"]:
+    elif call.data in ["fetch_top_commission", "fetch_disc_0"]:
         bot.answer_callback_query(call.id, "🔍 Consultando API da Shopee...")
         
-        # Define os parâmetros de acordo com o botão clicado
-        if call.data == "fetch_top_commission":
-            min_disc = 0
-            sort_comm = True
-            msg_header = "💰 <b>PRODUTO COM ALTA COMISSÃO!</b> 💰"
-        elif call.data == "fetch_disc_10":
-            min_disc = 10
-            sort_comm = False
-            msg_header = "💥 <b>OFERTA COM MAIS DE 10% DE DESCONTO!</b> 💥"
-        elif call.data == "fetch_disc_30":
-            min_disc = 30
-            sort_comm = False
-            msg_header = "🔥 <b>SUPER DESCONTO (MAIS DE 30%)!</b> 🔥"
-        else: # fetch_disc_0
-            min_disc = 0
-            sort_comm = False
-            msg_header = "📦 <b>OFERTA ENCONTRADA NA SHOPEE!</b> 📦"
+        sort_comm = (call.data == "fetch_top_commission")
+        msg_header = "💰 <b>PRODUTO COM ALTA COMISSÃO!</b> 💰" if sort_comm else "📦 <b>OFERTA ENCONTRADA NA SHOPEE!</b> 📦"
 
-        deals = shopee.get_offers(limit=20, min_discount=min_disc, sort_by_commission=sort_comm)
+        deals = shopee.get_offers(limit=20, sort_by_commission=sort_comm)
         
         if deals:
             item = deals[0]
-            title = item.get("productName")
-            price_original = float(item.get("price", 0))
-            discount = float(item.get("discount", 0))
-            commission_rate = float(item.get("commissionRate", 0))
-            price_discounted = price_original * (1 - (discount / 100)) if discount > 0 else price_original
+            title = item.get("productName", "Produto Shopee")
+            price = float(item.get("price", 0) or 0)
+            commission_rate = float(item.get("commissionRate", 0) or 0)
+            
+            # Ajusta exibição caso a comissão venha em formato decimal (ex: 0.08 -> 8.0%)
+            if commission_rate < 1.0 and commission_rate > 0:
+                commission_rate *= 100
             
             affiliate_link = shopee.convert_to_affiliate_link(item.get("offerLink"), sub_id="bot_private")
             
             caption = (
                 f"{msg_header}\n\n"
                 f"📦 <b>{title[:70]}...</b>\n\n"
-                f"🏷️ <b>Desconto:</b> {discount:.0f}%\n"
-                f"💵 <b>Comissão Estimada do Afiliado:</b> {commission_rate:.1f}%\n"
-                f"❌ De: <s>R$ {price_original:.2f}</s>\n"
-                f"✅ Por: <b>R$ {price_discounted:.2f}</b>\n\n"
+                f"💵 <b>Comissão Estimada:</b> {commission_rate:.1f}%\n"
+                f"✅ Preço: <b>R$ {price:.2f}</b>\n\n"
                 f"🛒 <b>COMPRE AQUI:</b>\n{affiliate_link}"
             )
             
             bot.send_photo(chat_id, photo=item.get("imageUrl"), caption=caption, parse_mode="HTML")
         else:
-            bot.send_message(chat_id, f"⚠️ Nenhuma oferta encontrada para este critério no momento.")
+            bot.send_message(chat_id, "⚠️ Nenhuma oferta retornada. Verifique os logs no painel do Render.")
 
     elif call.data == "config_interval":
         bot.send_message(chat_id, "⚙️ <b>Configuração de Intervalo:</b>\nVocê pode alterar os horários e o tempo entre disparos no painel principal.", parse_mode="HTML")
