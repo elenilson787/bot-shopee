@@ -1,8 +1,23 @@
 import os
+import threading
 import telebot
+from flask import Flask
 from telebot.types import InlineKeyboardMarkup, InlineKeyboardButton
 from shopee_hub import ShopeeAffiliateHub
 
+# --- 1. MINI SERVIDO WEB PARA ENGANAR O RENDER ---
+app = Flask(__name__)
+
+@app.route('/')
+def home():
+    return "🤖 Robô da Shopee está rodando 24/7 com sucesso!", 200
+
+def run_web_server():
+    # O Render injeta a porta automaticamente na variável de ambiente PORT
+    port = int(os.environ.get("PORT", 10000))
+    app.run(host="0.0.0.0", port=port)
+
+# --- 2. CONFIGURAÇÕES E INSTÂNCIAS ---
 TELEGRAM_BOT_TOKEN = os.environ.get("TELEGRAM_BOT_TOKEN")
 SHOPEE_APP_ID = os.environ.get("SHOPEE_APP_ID")
 SHOPEE_APP_SECRET = os.environ.get("SHOPEE_APP_SECRET")
@@ -19,7 +34,6 @@ def send_welcome(message):
     markup.row_width = 1
     markup.add(
         InlineKeyboardButton("🔎 Buscar Oferta por Filtros", callback_data="menu_filters"),
-        InlineKeyboardButton("⚙️ Configurar Intervalo de Postagem", callback_data="config_interval"),
         InlineKeyboardButton("📢 Status do Robô / Chat ID", callback_data="status_info")
     )
     
@@ -31,7 +45,6 @@ def send_welcome(message):
     
     bot.reply_to(message, welcome_text, parse_mode="HTML", reply_markup=markup)
 
-# --- SUBMENU DE FILTROS ---
 def show_filter_menu(chat_id, message_id=None):
     markup = InlineKeyboardMarkup()
     markup.row_width = 1
@@ -48,7 +61,6 @@ def show_filter_menu(chat_id, message_id=None):
     else:
         bot.send_message(chat_id, text, parse_mode="HTML", reply_markup=markup)
 
-# --- RESPOSTAS DOS BOTÕES ---
 @bot.callback_query_handler(func=lambda call: True)
 def callback_listener(call):
     chat_id = call.message.chat.id
@@ -88,15 +100,17 @@ def callback_listener(call):
             
             bot.send_photo(chat_id, photo=item.get("imageUrl"), caption=caption, parse_mode="HTML")
         else:
-            # Mostra o motivo real do erro no próprio chat
             bot.send_message(chat_id, f"⚠️ <b>Erro ao buscar oferta:</b>\n<code>{error_msg}</code>", parse_mode="HTML")
-
-    elif call.data == "config_interval":
-        bot.send_message(chat_id, "⚙️ <b>Configuração de Intervalo:</b>\nEm breve você poderá alterar os horários por aqui!", parse_mode="HTML")
 
     elif call.data == "status_info":
         bot.send_message(chat_id, f"ℹ️ <b>Seu Chat ID:</b> <code>{chat_id}</code>\nRobô ativo e conectado!", parse_mode="HTML")
 
+# --- 3. INICIALIZAÇÃO SIMULTÂNEA ---
 if __name__ == "__main__":
-    print("🤖 Robô atualizado e escutando o Telegram...")
+    # Inicia o servidor Web na thread secundária
+    server_thread = threading.Thread(target=run_web_server)
+    server_thread.daemon = True
+    server_thread.start()
+
+    print("🤖 Robô e Servidor Web ativos! Escutando o Telegram...")
     bot.infinity_polling()
