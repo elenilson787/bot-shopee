@@ -26,7 +26,8 @@ class ShopeeAffiliateHub:
         response = requests.post(self.endpoint, data=payload, headers=headers)
         return response.json()
 
-    def get_flash_deals(self, limit: int = 15, min_discount: int = 30):
+    def get_offers(self, limit: int = 20, min_discount: int = 0, sort_by_commission: bool = False):
+        """Busca ofertas na Shopee com filtros flexíveis de desconto e ordenação por comissão."""
         graphql_query = """
         query GetHotOffers($limit: Int) {
             productOfferV2(page: 1, limit: $limit, sortType: 2) {
@@ -44,7 +45,15 @@ class ShopeeAffiliateHub:
         """
         result = self._execute_query(graphql_query, {"limit": limit})
         offers = result.get("data", {}).get("productOfferV2", {}).get("nodes", [])
-        return [item for item in offers if float(item.get("discount", 0)) >= min_discount]
+        
+        # 1. Filtra pelo desconto mínimo escolhido
+        filtered_offers = [item for item in offers if float(item.get("discount", 0)) >= min_discount]
+        
+        # 2. Se for solicitado, ordena da MAIOR comissão para a menor
+        if sort_by_commission:
+            filtered_offers.sort(key=lambda x: float(x.get("commissionRate", 0)), reverse=True)
+            
+        return filtered_offers
 
     def convert_to_affiliate_link(self, original_url: str, sub_id: str = "github_bot") -> str:
         graphql_query = """
