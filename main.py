@@ -122,4 +122,4 @@ if __name__ == "__main__":
         except Exception as e:
             print(f"⚠️ Conflito ou oscilação detectada: {e}")
             time.sleep(10)
-    
+            
