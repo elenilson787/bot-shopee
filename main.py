@@ -1,23 +1,8 @@
 import os
-import threading
 import telebot
-from flask import Flask
 from telebot.types import InlineKeyboardMarkup, InlineKeyboardButton
 from shopee_hub import ShopeeAffiliateHub
 
-# --- 1. MINI SERVIDO WEB PARA ENGANAR O RENDER ---
-app = Flask(__name__)
-
-@app.route('/')
-def home():
-    return "🤖 Robô da Shopee está rodando 24/7 com sucesso!", 200
-
-def run_web_server():
-    # O Render injeta a porta automaticamente na variável de ambiente PORT
-    port = int(os.environ.get("PORT", 10000))
-    app.run(host="0.0.0.0", port=port)
-
-# --- 2. CONFIGURAÇÕES E INSTÂNCIAS ---
 TELEGRAM_BOT_TOKEN = os.environ.get("TELEGRAM_BOT_TOKEN")
 SHOPEE_APP_ID = os.environ.get("SHOPEE_APP_ID")
 SHOPEE_APP_SECRET = os.environ.get("SHOPEE_APP_SECRET")
@@ -45,6 +30,7 @@ def send_welcome(message):
     
     bot.reply_to(message, welcome_text, parse_mode="HTML", reply_markup=markup)
 
+# --- SUBMENU DE FILTROS ---
 def show_filter_menu(chat_id, message_id=None):
     markup = InlineKeyboardMarkup()
     markup.row_width = 1
@@ -61,56 +47,70 @@ def show_filter_menu(chat_id, message_id=None):
     else:
         bot.send_message(chat_id, text, parse_mode="HTML", reply_markup=markup)
 
+# --- RESPOSTAS DOS BOTÕES ---
 @bot.callback_query_handler(func=lambda call: True)
 def callback_listener(call):
     chat_id = call.message.chat.id
     
-    if call.data == "menu_filters":
-        show_filter_menu(chat_id, call.message.message_id)
+    try:
+        if call.data == "menu_filters":
+            show_filter_menu(chat_id, call.message.message_id)
 
-    elif call.data == "menu_main":
-        send_welcome(call.message)
+        elif call.data == "menu_main":
+            send_welcome(call.message)
 
-    elif call.data in ["fetch_top_commission", "fetch_disc_0"]:
-        bot.answer_callback_query(call.id, "🔍 Consultando API da Shopee...")
-        
-        sort_comm = (call.data == "fetch_top_commission")
-        msg_header = "💰 <b>PRODUTO COM ALTA COMISSÃO!</b> 💰" if sort_comm else "📦 <b>OFERTA ENCONTRADA NA SHOPEE!</b> 📦"
-
-        deals, error_msg = shopee.get_offers(limit=15, sort_by_commission=sort_comm)
-        
-        if deals:
-            item = deals[0]
-            title = item.get("productName", "Produto Shopee")
-            price = float(item.get("price", 0) or 0)
-            commission_rate = float(item.get("commissionRate", 0) or 0)
+        elif call.data in ["fetch_top_commission", "fetch_disc_0"]:
+            bot.answer_callback_query(call.id, "🔍 Consultando API da Shopee...")
             
-            if commission_rate < 1.0 and commission_rate > 0:
-                commission_rate *= 100
-            
-            affiliate_link = shopee.convert_to_affiliate_link(item.get("offerLink"), sub_id="bot_private")
-            
-            caption = (
-                f"{msg_header}\n\n"
-                f"📦 <b>{title[:70]}...</b>\n\n"
-                f"💵 <b>Comissão Estimada:</b> {commission_rate:.1f}%\n"
-                f"✅ Preço: <b>R$ {price:.2f}</b>\n\n"
-                f"🛒 <b>COMPRE AQUI:</b>\n{affiliate_link}"
-            )
-            
-            bot.send_photo(chat_id, photo=item.get("imageUrl"), caption=caption, parse_mode="HTML")
-        else:
-            bot.send_message(chat_id, f"⚠️ <b>Erro ao buscar oferta:</b>\n<code>{error_msg}</code>", parse_mode="HTML")
+            sort_comm = (call.data == "fetch_top_commission")
+            msg_header = "💰 <b>PRODUTO COM ALTA COMISSÃO!</b> 💰" if sort_comm else "📦 <b>OFERTA ENCONTRADA NA SHOPEE!</b> 📦"
 
-    elif call.data == "status_info":
-        bot.send_message(chat_id, f"ℹ️ <b>Seu Chat ID:</b> <code>{chat_id}</code>\nRobô ativo e conectado!", parse_mode="HTML")
+            # Lê o retorno da função sem forçar desempacotamento de variáveis
+            res = shopee.get_offers(limit=15, sort_by_commission=sort_comm)
+            
+            # Trata resposta caso a Shopee retorne dicionário de erro
+            if isinstance(res, dict) and "error" in res:
+                bot.send_message(chat_id, f"⚠️ <b>Erro ao buscar oferta:</b>\n<code>{res['error']}</code>", parse_mode="HTML")
+                return
 
-# --- 3. INICIALIZAÇÃO SIMULTÂNEA ---
+            deals = res if isinstance(res, list) else []
+            
+            if deals:
+                item = deals[0]
+                title = item.get("productName", "Produto Shopee")
+                price = float(item.get("price", 0) or 0)
+                commission_rate = float(item.get("commissionRate", 0) or 0)
+                
+                if 0 < commission_rate < 1.0:
+                    commission_rate *= 100
+                
+                affiliate_link = shopee.convert_to_affiliate_link(item.get("offerLink"), sub_id="bot_private")
+                
+                caption = (
+                    f"{msg_header}\n\n"
+                    f"📦 <b>{title[:70]}...</b>\n\n"
+                    f"💵 <b>Comissão Estimada:</b> {commission_rate:.1f}%\n"
+                    f"✅ Preço: <b>R$ {price:.2f}</b>\n\n"
+                    f"🛒 <b>COMPRE AQUI:</b>\n{affiliate_link}"
+                )
+                
+                bot.send_photo(chat_id, photo=item.get("imageUrl"), caption=caption, parse_mode="HTML")
+            else:
+                bot.send_message(chat_id, "⚠️ Nenhuma oferta encontrada no momento.")
+
+        elif call.data == "status_info":
+            bot.send_message(chat_id, f"ℹ️ <b>Seu Chat ID:</b> <code>{chat_id}</code>\nRobô ativo e conectado!", parse_mode="HTML")
+
+    except Exception as e:
+        print(f"❌ Erro ao processar clique do botão: {e}")
+        bot.send_message(chat_id, f"⚠️ <b>Ocorreu uma falha interna:</b>\n<code>{e}</code>", parse_mode="HTML")
+
 if __name__ == "__main__":
-    # Inicia o servidor Web na thread secundária
-    server_thread = threading.Thread(target=run_web_server)
-    server_thread.daemon = True
-    server_thread.start()
-
-    print("🤖 Robô e Servidor Web ativos! Escutando o Telegram...")
-    bot.infinity_polling()
+    print("🤖 Robô atualizado e escutando o Telegram...")
+    try:
+        bot.remove_webhook()
+    except Exception as e:
+        print(f"Aviso ao limpar webhook: {e}")
+        
+    bot.infinity_polling(skip_pending=True)
+    
