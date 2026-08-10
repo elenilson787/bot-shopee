@@ -3,27 +3,34 @@ import hashlib
 import json
 import requests
 
+def sanitize_key(val: str) -> str:
+    """Limpa espaços, aspas simples e aspas duplas acidentais das variáveis de ambiente."""
+    if not val:
+        return ""
+    return str(val).strip().strip('"').strip("'").strip()
+
 class ShopeeAffiliateHub:
     def __init__(self, app_id: str, app_secret: str):
-        self.app_id = str(app_id).strip() if app_id else ""
-        self.app_secret = str(app_secret).strip() if app_secret else ""
+        self.app_id = sanitize_key(app_id)
+        self.app_secret = sanitize_key(app_secret)
         self.endpoint = "https://open-api.affiliate.shopee.com.br/graphql"
+        
+        print(f"🔑 Shopee API Configurada - App ID: '{self.app_id}' (Tamanho do Secret: {len(self.app_secret)})")
 
     def _generate_signature(self, timestamp: int, payload: str) -> str:
         factor = f"{self.app_id}{timestamp}{payload}{self.app_secret}"
         return hashlib.sha256(factor.encode('utf-8')).hexdigest()
 
-    def _execute_query(self, query_str: str, variables: dict = None, retries: int = 2) -> dict:
+    def _execute_query(self, query_str: str, variables: dict = None, retries: int = 1) -> dict:
         timestamp = int(time.time())
         
-        # Limpa e minifica a query GraphQL
+        # Minifica a query GraphQL removendo espaços redundantes
         clean_query = " ".join(query_str.split())
         
         payload_dict = {"query": clean_query}
         if variables:
             payload_dict["variables"] = variables
             
-        # Gera o JSON em UTF-8 compacto sem espaços
         payload = json.dumps(payload_dict, separators=(',', ':'), ensure_ascii=False)
         signature = self._generate_signature(timestamp, payload)
 
@@ -44,10 +51,9 @@ class ShopeeAffiliateHub:
             if "errors" in res_json and res_json["errors"]:
                 err_msg = res_json["errors"][0].get("message", "Erro de Autenticação")
                 
-                # Se for erro de assinatura (10020) e ainda houver tentativas, aguarda e tenta novamente com timestamp novo
+                # Se for erro de assinatura (10020), tenta mais 1 vez atualizando o timestamp
                 if ("10020" in err_msg or "Invalid Signature" in err_msg) and retries > 0:
-                    print("⚠️ Assinatura recusada por oscilação. Reenviando em 1.5s...")
-                    time.sleep(1.5)
+                    time.sleep(1)
                     return self._execute_query(query_str, variables, retries=retries - 1)
                 
                 print(f"⚠️ Shopee Recusou: {err_msg}")
