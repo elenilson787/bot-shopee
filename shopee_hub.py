@@ -5,7 +5,6 @@ import requests
 
 class ShopeeAffiliateHub:
     def __init__(self, app_id: str, app_secret: str):
-        # Remove espaços em branco ou quebras de linha acidentais das chaves
         self.app_id = str(app_id).strip() if app_id else ""
         self.app_secret = str(app_secret).strip() if app_secret else ""
         self.endpoint = "https://open-api.affiliate.shopee.com.br/graphql"
@@ -14,18 +13,18 @@ class ShopeeAffiliateHub:
         factor = f"{self.app_id}{timestamp}{payload}{self.app_secret}"
         return hashlib.sha256(factor.encode('utf-8')).hexdigest()
 
-    def _execute_query(self, query_str: str, variables: dict = None) -> dict:
+    def _execute_query(self, query_str: str, variables: dict = None, retries: int = 2) -> dict:
         timestamp = int(time.time())
         
-        # Minifica a query GraphQL removendo espaços e quebras de linha extras
+        # Limpa e minifica a query GraphQL
         clean_query = " ".join(query_str.split())
         
         payload_dict = {"query": clean_query}
         if variables:
             payload_dict["variables"] = variables
             
-        # Gera o JSON compacto sem espaços para a assinatura
-        payload = json.dumps(payload_dict, separators=(',', ':'))
+        # Gera o JSON em UTF-8 compacto sem espaços
+        payload = json.dumps(payload_dict, separators=(',', ':'), ensure_ascii=False)
         signature = self._generate_signature(timestamp, payload)
 
         headers = {
@@ -34,11 +33,23 @@ class ShopeeAffiliateHub:
         }
 
         try:
-            response = requests.post(self.endpoint, data=payload, headers=headers, timeout=12)
+            response = requests.post(
+                self.endpoint, 
+                data=payload.encode('utf-8'), 
+                headers=headers, 
+                timeout=12
+            )
             res_json = response.json()
             
             if "errors" in res_json and res_json["errors"]:
-                err_msg = res_json["errors"][0].get("message", "Erro de Autenticação na Shopee")
+                err_msg = res_json["errors"][0].get("message", "Erro de Autenticação")
+                
+                # Se for erro de assinatura (10020) e ainda houver tentativas, aguarda e tenta novamente com timestamp novo
+                if ("10020" in err_msg or "Invalid Signature" in err_msg) and retries > 0:
+                    print("⚠️ Assinatura recusada por oscilação. Reenviando em 1.5s...")
+                    time.sleep(1.5)
+                    return self._execute_query(query_str, variables, retries=retries - 1)
+                
                 print(f"⚠️ Shopee Recusou: {err_msg}")
                 return {"error": f"Shopee Recusou: {err_msg}"}
                 
@@ -47,7 +58,7 @@ class ShopeeAffiliateHub:
             print(f"❌ Erro ao conectar com a API da Shopee: {e}")
             return {"error": str(e)}
 
-    def get_offers(self, limit: int = 20, sort_by_commission: bool = False):
+    def get_offers(self, limit: int = 30, sort_by_commission: bool = False):
         graphql_query = """
         query GetHotOffers($limit: Int) {
             productOfferV2(page: 1, limit: $limit) {
@@ -89,3 +100,4 @@ class ShopeeAffiliateHub:
         data = result.get("data") or {}
         gen_url = data.get("generateUrl") or {}
         return gen_url.get("shortLink", original_url)
+        
