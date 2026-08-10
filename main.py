@@ -1,4 +1,5 @@
 import os
+import random
 import telebot
 from telebot.types import InlineKeyboardMarkup, InlineKeyboardButton
 from shopee_hub import ShopeeAffiliateHub
@@ -65,10 +66,9 @@ def callback_listener(call):
             sort_comm = (call.data == "fetch_top_commission")
             msg_header = "💰 <b>PRODUTO COM ALTA COMISSÃO!</b> 💰" if sort_comm else "📦 <b>OFERTA ENCONTRADA NA SHOPEE!</b> 📦"
 
-            # Lê o retorno da função sem forçar desempacotamento de variáveis
-            res = shopee.get_offers(limit=15, sort_by_commission=sort_comm)
+            # Busca um lote de 30 ofertas para ter variedade
+            res = shopee.get_offers(limit=30, sort_by_commission=sort_comm)
             
-            # Trata resposta caso a Shopee retorne dicionário de erro
             if isinstance(res, dict) and "error" in res:
                 bot.send_message(chat_id, f"⚠️ <b>Erro ao buscar oferta:</b>\n<code>{res['error']}</code>", parse_mode="HTML")
                 return
@@ -76,7 +76,9 @@ def callback_listener(call):
             deals = res if isinstance(res, list) else []
             
             if deals:
-                item = deals[0]
+                # Sorteia um item aleatório do lote retornado em vez de pegar sempre o [0]
+                item = random.choice(deals)
+                
                 title = item.get("productName", "Produto Shopee")
                 price = float(item.get("price", 0) or 0)
                 commission_rate = float(item.get("commissionRate", 0) or 0)
@@ -109,17 +111,14 @@ if __name__ == "__main__":
     import time
     print("🤖 Robô atualizado e escutando o Telegram...")
     
-    # 1. Limpa webhooks antigos e descarta atualizações pendentes
     try:
         bot.delete_webhook(drop_pending_updates=True)
     except Exception as e:
         print(f"Aviso ao limpar webhook: {e}")
 
-    # 2. Loop de reconexão automática (evita crash no Render em caso de erro 409)
     while True:
         try:
             bot.infinity_polling(skip_pending=True, timeout=20)
         except Exception as e:
             print(f"⚠️ Conflito ou oscilação detectada: {e}")
-            print("⏳ Aguardando 10 segundos para reconectar...")
             time.sleep(10)
