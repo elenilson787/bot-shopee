@@ -106,11 +106,20 @@ def callback_listener(call):
         bot.send_message(chat_id, f"⚠️ <b>Ocorreu uma falha interna:</b>\n<code>{e}</code>", parse_mode="HTML")
 
 if __name__ == "__main__":
+    import time
     print("🤖 Robô atualizado e escutando o Telegram...")
+    
+    # 1. Limpa webhooks antigos e descarta atualizações pendentes
     try:
-        bot.remove_webhook()
+        bot.delete_webhook(drop_pending_updates=True)
     except Exception as e:
         print(f"Aviso ao limpar webhook: {e}")
-        
-    bot.infinity_polling(skip_pending=True)
-    
+
+    # 2. Loop de reconexão automática (evita crash no Render em caso de erro 409)
+    while True:
+        try:
+            bot.infinity_polling(skip_pending=True, timeout=20)
+        except Exception as e:
+            print(f"⚠️ Conflito ou oscilação detectada: {e}")
+            print("⏳ Aguardando 10 segundos para reconectar...")
+            time.sleep(10)
