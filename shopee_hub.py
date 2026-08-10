@@ -1,106 +1,82 @@
-import os
-import telebot
-from telebot.types import InlineKeyboardMarkup, InlineKeyboardButton
-from shopee_hub import ShopeeAffiliateHub
+import time
+import hashlib
+import json
+import requests
 
-TELEGRAM_BOT_TOKEN = os.environ.get("TELEGRAM_BOT_TOKEN")
-SHOPEE_APP_ID = os.environ.get("SHOPEE_APP_ID")
-SHOPEE_APP_SECRET = os.environ.get("SHOPEE_APP_SECRET")
+class ShopeeAffiliateHub:
+    def __init__(self, app_id: str, app_secret: str):
+        self.app_id = str(app_id).strip() if app_id else ""
+        self.app_secret = str(app_secret).strip() if app_secret else ""
+        self.endpoint = "https://open-api.affiliate.shopee.com.br/graphql"
 
-bot = telebot.TeleBot(TELEGRAM_BOT_TOKEN)
-shopee = ShopeeAffiliateHub(app_id=SHOPEE_APP_ID, app_secret=SHOPEE_APP_SECRET)
+    def _generate_signature(self, timestamp: int, payload: str) -> str:
+        factor = f"{self.app_id}{timestamp}{payload}{self.app_secret}"
+        return hashlib.sha256(factor.encode('utf-8')).hexdigest()
 
-# --- COMANDO /START E MENU PRINCIPAL ---
-@bot.message_handler(commands=['start', 'help'])
-def send_welcome(message):
-    user_name = message.from_user.first_name
-    
-    markup = InlineKeyboardMarkup()
-    markup.row_width = 1
-    markup.add(
-        InlineKeyboardButton("🔎 Buscar Oferta por Filtros", callback_data="menu_filters"),
-        InlineKeyboardButton("📢 Status do Robô / Chat ID", callback_data="status_info")
-    )
-    
-    welcome_text = (
-        f"Olá, <b>{user_name}</b>! 👋\n\n"
-        f"Eu sou o seu <b>Robô de Ofertas e Altas Comissões da Shopee</b>.\n\n"
-        f"<b>Escolha uma das opções abaixo:</b>"
-    )
-    
-    bot.reply_to(message, welcome_text, parse_mode="HTML", reply_markup=markup)
+    def _execute_query(self, query_str: str, variables: dict = None) -> dict:
+        timestamp = int(time.time())
+        payload = json.dumps({"query": query_str, "variables": variables or {}}, separators=(',', ':'))
+        signature = self._generate_signature(timestamp, payload)
 
-# --- SUBMENU DE FILTROS ---
-def show_filter_menu(chat_id, message_id=None):
-    markup = InlineKeyboardMarkup()
-    markup.row_width = 1
-    markup.add(
-        InlineKeyboardButton("💰 Maiores Comissões", callback_data="fetch_top_commission"),
-        InlineKeyboardButton("🎁 Qualquer Oferta Ativa na Shopee", callback_data="fetch_disc_0"),
-        InlineKeyboardButton("⬅️ Voltar ao Menu Principal", callback_data="menu_main")
-    )
-    
-    text = "🎯 <b>Como você deseja buscar as ofertas agora?</b>\n<i>Escolha o tipo de filtro desejado:</i>"
-    
-    if message_id:
-        bot.edit_message_text(text, chat_id, message_id, parse_mode="HTML", reply_markup=markup)
-    else:
-        bot.send_message(chat_id, text, parse_mode="HTML", reply_markup=markup)
+        headers = {
+            "Content-Type": "application/json",
+            "Authorization": f"SHA256 Credential={self.app_id}, Timestamp={timestamp}, Signature={signature}"
+        }
 
-# --- RESPOSTAS DOS BOTÕES ---
-@bot.callback_query_handler(func=lambda call: True)
-def callback_listener(call):
-    chat_id = call.message.chat.id
-    
-    if call.data == "menu_filters":
-        show_filter_menu(chat_id, call.message.message_id)
+        try:
+            response = requests.post(self.endpoint, data=payload, headers=headers, timeout=12)
+            res_json = response.json()
+            
+            if "errors" in res_json and res_json["errors"]:
+                err_msg = res_json["errors"][0].get("message", "Erro desconhecido na Shopee")
+                print(f"⚠️ Shopee Recusou: {err_msg}")
+                return {"error": f"Shopee Recusou: {err_msg}"}
+                
+            return res_json
+        except Exception as e:
+            print(f"❌ Erro ao conectar com a API da Shopee: {e}")
+            return {"error": str(e)}
 
-    elif call.data == "menu_main":
-        send_welcome(call.message)
-
-    elif call.data in ["fetch_top_commission", "fetch_disc_0"]:
-        bot.answer_callback_query(call.id, "🔍 Consultando API da Shopee...")
+    def get_offers(self, limit: int = 20, sort_by_commission: bool = False):
+        graphql_query = """
+        query GetHotOffers($limit: Int) {
+            productOfferV2(page: 1, limit: $limit) {
+                nodes {
+                    itemId
+                    productName
+                    price
+                    imageUrl
+                    offerLink
+                    commissionRate
+                    commission
+                }
+            }
+        }
+        """
+        result = self._execute_query(graphql_query, {"limit": limit})
         
-        sort_comm = (call.data == "fetch_top_commission")
-        msg_header = "💰 <b>PRODUTO COM ALTA COMISSÃO!</b> 💰" if sort_comm else "📦 <b>OFERTA ENCONTRADA NA SHOPEE!</b> 📦"
+        if "error" in result:
+            return result
 
-        res = shopee.get_offers(limit=20, sort_by_commission=sort_comm)
+        data = result.get("data") or {}
+        product_offer = data.get("productOfferV2") or {}
+        offers = product_offer.get("nodes") or []
         
-        # Exibe mensagem de erro no chat se houver recusa da API
-        if isinstance(res, dict) and "error" in res:
-            bot.send_message(chat_id, f"⚠️ <b>Erro ao buscar oferta:</b>\n<code>{res['error']}</code>", parse_mode="HTML")
-            return
+        if sort_by_commission and offers:
+            offers.sort(key=lambda x: float(x.get("commissionRate", 0) or 0), reverse=True)
+            
+        return offers
 
-        deals = res if isinstance(res, list) else []
+    def convert_to_affiliate_link(self, original_url: str, sub_id: str = "bot_private") -> str:
+        graphql_query = """
+        query ConvertLink($originUrl: String!, $subId: String) {
+            generateUrl(originUrl: $originUrl, subId1: $subId) {
+                shortLink
+            }
+        }
+        """
+        result = self._execute_query(graphql_query, {"originUrl": original_url, "subId": sub_id})
+        data = result.get("data") or {}
+        gen_url = data.get("generateUrl") or {}
+        return gen_url.get("shortLink", original_url)
         
-        if deals:
-            item = deals[0]
-            title = item.get("productName", "Produto Shopee")
-            price = float(item.get("price", 0) or 0)
-            commission_rate = float(item.get("commissionRate", 0) or 0)
-            
-            # Converte comissão se vier em formato decimal (ex: 0.08 -> 8.0%)
-            if 0 < commission_rate < 1.0:
-                commission_rate *= 100
-            
-            affiliate_link = shopee.convert_to_affiliate_link(item.get("offerLink"), sub_id="bot_private")
-            
-            caption = (
-                f"{msg_header}\n\n"
-                f"📦 <b>{title[:70]}...</b>\n\n"
-                f"💵 <b>Comissão Estimada:</b> {commission_rate:.1f}%\n"
-                f"✅ Preço: <b>R$ {price:.2f}</b>\n\n"
-                f"🛒 <b>COMPRE AQUI:</b>\n{affiliate_link}"
-            )
-            
-            bot.send_photo(chat_id, photo=item.get("imageUrl"), caption=caption, parse_mode="HTML")
-        else:
-            bot.send_message(chat_id, "⚠️ Nenhuma oferta encontrada no momento.")
-
-    elif call.data == "status_info":
-        bot.send_message(chat_id, f"ℹ️ <b>Seu Chat ID:</b> <code>{chat_id}</code>\nRobô ativo e conectado!", parse_mode="HTML")
-
-if __name__ == "__main__":
-    print("🤖 Robô atualizado e escutando o Telegram...")
-    bot.infinity_polling()
-    
