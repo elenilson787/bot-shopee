@@ -5,9 +5,9 @@ import requests
 
 class ShopeeAffiliateHub:
     def __init__(self, app_id: str, app_secret: str):
-        self.app_id = app_id or ""
-        self.app_secret = app_secret or ""
-        # Endpoint oficial da Shopee Brasil
+        self.app_id = app_id
+        self.app_secret = app_secret
+        # Endpoint correto da Shopee Brasil (.com.br)
         self.endpoint = "https://open-api.affiliate.shopee.com.br/graphql"
 
     def _generate_signature(self, timestamp: int, payload: str) -> str:
@@ -15,11 +15,8 @@ class ShopeeAffiliateHub:
         return hashlib.sha256(factor.encode('utf-8')).hexdigest()
 
     def _execute_query(self, query_str: str, variables: dict = None) -> dict:
-        if not self.app_id or not self.app_secret:
-            return {"error": "Credenciais da Shopee não configuradas no Render!"}
-
         timestamp = int(time.time())
-        payload = json.dumps({"query": query_str, "variables": variables or {}}, separators=(',', ':'))
+        payload = json.dumps({"query": query_str, "variables": variables or {}})
         signature = self._generate_signature(timestamp, payload)
 
         headers = {
@@ -31,11 +28,12 @@ class ShopeeAffiliateHub:
             response = requests.post(self.endpoint, data=payload, headers=headers, timeout=12)
             return response.json()
         except Exception as e:
-            return {"error": f"Falha de conexão com a Shopee: {str(e)}"}
+            print(f"❌ Erro ao conectar com a API da Shopee: {e}")
+            return {"error": str(e)}
 
-    def get_offers(self, limit: int = 15, sort_by_commission: bool = False):
+    def get_offers(self, limit: int = 20, sort_by_commission: bool = False):
         graphql_query = """
-        query GetOffers($limit: Int) {
+        query GetHotOffers($limit: Int) {
             productOfferV2(page: 1, limit: $limit) {
                 nodes {
                     itemId
@@ -44,6 +42,7 @@ class ShopeeAffiliateHub:
                     imageUrl
                     offerLink
                     commissionRate
+                    commission
                 }
             }
         }
@@ -51,23 +50,16 @@ class ShopeeAffiliateHub:
         result = self._execute_query(graphql_query, {"limit": limit})
         
         if "error" in result:
-            return None, result["error"]
-
-        if "errors" in result and result["errors"]:
-            err_msg = result["errors"][0].get("message", "Erro GraphQL desconhecido")
-            return None, f"Shopee Recusou: {err_msg}"
+            return {"error": result["error"]}
 
         data = result.get("data") or {}
         product_offer = data.get("productOfferV2") or {}
         offers = product_offer.get("nodes") or []
-
-        if not offers:
-            return None, "Nenhuma oferta retornada na lista da Shopee no momento."
-
-        if sort_by_commission:
+        
+        if sort_by_commission and offers:
             offers.sort(key=lambda x: float(x.get("commissionRate", 0) or 0), reverse=True)
-
-        return offers, None
+            
+        return offers
 
     def convert_to_affiliate_link(self, original_url: str, sub_id: str = "bot_private") -> str:
         graphql_query = """
@@ -81,3 +73,4 @@ class ShopeeAffiliateHub:
         data = result.get("data") or {}
         gen_url = data.get("generateUrl") or {}
         return gen_url.get("shortLink", original_url)
+        
