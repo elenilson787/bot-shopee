@@ -5,18 +5,21 @@ import requests
 
 class ShopeeAffiliateHub:
     def __init__(self, app_id: str, app_secret: str):
-        self.app_id = app_id
-        self.app_secret = app_secret
-        # Endpoint correto da Shopee Brasil (.com.br)
+        # Remove espaços em branco acidentais das chaves
+        self.app_id = str(app_id).strip() if app_id else ""
+        self.app_secret = str(app_secret).strip() if app_secret else ""
         self.endpoint = "https://open-api.affiliate.shopee.com.br/graphql"
 
     def _generate_signature(self, timestamp: int, payload: str) -> str:
+        # Gera a assinatura exata exigida pelo protocolo SHA256 da Shopee
         factor = f"{self.app_id}{timestamp}{payload}{self.app_secret}"
         return hashlib.sha256(factor.encode('utf-8')).hexdigest()
 
     def _execute_query(self, query_str: str, variables: dict = None) -> dict:
         timestamp = int(time.time())
-        payload = json.dumps({"query": query_str, "variables": variables or {}})
+        
+        # Gera JSON compacto sem espaços adicionais para casar com a assinatura
+        payload = json.dumps({"query": query_str, "variables": variables or {}}, separators=(',', ':'))
         signature = self._generate_signature(timestamp, payload)
 
         headers = {
@@ -26,7 +29,15 @@ class ShopeeAffiliateHub:
 
         try:
             response = requests.post(self.endpoint, data=payload, headers=headers, timeout=12)
-            return response.json()
+            res_json = response.json()
+            
+            # Trata erros de autenticação ou recusa do GraphQL
+            if "errors" in res_json and res_json["errors"]:
+                err_msg = res_json["errors"][0].get("message", "Erro desconhecido na Shopee")
+                print(f"⚠️ Shopee Recusou: {err_msg}")
+                return {"error": f"Shopee Recusou: {err_msg}"}
+                
+            return res_json
         except Exception as e:
             print(f"❌ Erro ao conectar com a API da Shopee: {e}")
             return {"error": str(e)}
@@ -50,7 +61,7 @@ class ShopeeAffiliateHub:
         result = self._execute_query(graphql_query, {"limit": limit})
         
         if "error" in result:
-            return {"error": result["error"]}
+            return result
 
         data = result.get("data") or {}
         product_offer = data.get("productOfferV2") or {}
